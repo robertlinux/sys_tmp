@@ -993,9 +993,122 @@ static int install_file(const char *path, int devfd, struct stat *rst)
 }
 
 
+static int write_to_device(ext2_filsys fs, const char *filename,
+                                  const char *str, int length, int i_flags,
+                                  int devfd)
+{
+}
+
+static int handle_adv_on_device(ext2_filsys fs, int update_only)
+{
+}
+
 static int install_file_to_device(const char *device_path, int devfd,
                 int update_only)
 {
+    int         retval;
+    ext2_filsys fs = NULL;
+    int         open_flag = EXT2_FLAG_RW, mount_flags;
+    ext2_ino_t  oldino;
+    ext2_ino_t  root = EXT2_ROOT_INO;
+
+    const char *file = "ldlinux.sys";
+    const char *oldfile = "extlinux.sys";
+    const char *c32file = "ldlinux.c32";
+
+
+    retval = ext2fs_check_if_mounted(device_path, &mount_flags);
+    if (retval) {
+        fprintf(stderr, "%s: ext2fs_check_if_mount() error on %s\n",
+                program, device_path);
+        return -1;
+    }
+
+    if (mount_flags & EXT2_MF_MOUNTED) {
+        fprintf(stderr, "%s: ERROR: %s is mounted, you need use the mount\n\
+                point as the install dir or umount it to use the device as\n\
+                the install device\n",
+                program, device_path);
+        return -1;
+    }
+
+    /* Open the fs */
+    retval = ext2fs_open(device_path, open_flag, 0, 0, unix_io_manager, &fs);
+    if (retval) {
+        fprintf(stderr, "%s: ERROR: while trying to open: %s\n",
+                program, device_path);
+        if (retval == EXT2_ET_BAD_MAGIC)
+            fprintf(stderr,
+                "%s: ERROR: only ext2, ext3 and ext4 is supported for umounted fs\n",
+                program);
+        return -1;
+    }
+
+    fs->default_bitmap_type = EXT2FS_BMAP64_RBTREE;
+
+    /* Read the inode map */
+    retval = ext2fs_read_inode_bitmap(fs);
+    if (retval) {
+        fprintf(stderr, "%s: ERROR: while reading inode bitmap: %s\n",
+                program, device_path);
+        goto fail;
+    }
+
+    /* Read the block map */
+    retval = ext2fs_read_block_bitmap(fs);
+    if (retval) {
+        fprintf(stderr, "%s: ERROR: while reading block bitmap: %s\n",
+                program, device_path);
+        goto fail;
+    }
+
+    if (handle_adv_on_device(fs, update_only) < 0) {
+        fprintf(stderr, "%s: ERROR: while handling ADV on %s\n",
+                program, device_path);
+        retval = 1;
+        goto fail;
+    }
+
+    /* Return from here if only need update the adv */
+    if (update_only == -1) {
+        return ext2fs_close(fs);
+    }
+
+    /* Write ldlinux.sys */
+    retval = write_to_device(fs, file, (const char _force *)boot_image,
+                boot_image_len, EXT2_IMMUTABLE_FL, devfd);
+    if (retval) {
+        fprintf(stderr, "%s: ERROR: while writing: %s.\n",
+                program, file);
+        goto fail;
+    }
+
+    /* Write ldlinux.c32 */
+    retval = write_to_device(fs, c32file,
+                (const char _force *)syslinux_ldlinuxc32,
+                syslinux_ldlinuxc32_len, 0, devfd);
+    if (retval) {
+        fprintf(stderr, "%s: ERROR: while writing: %s.\n",
+                program, c32file);
+        goto fail;
+    }
+
+    /* Look if we have the extlinux.sys and remove it*/
+    retval = ext2fs_namei(fs, root, root, oldfile, &oldino);
+    if (retval == 0) {
+        dprintf("%s: found %s, removing it\n", program, oldfile);
+        retval = ext2fs_unlink(fs, root, oldfile, oldino, 0);
+        if (retval) {
+            fprintf(stderr, "%s: ERROR: failed to unlink: %s\n", program, oldfile);
+            goto fail;
+        }
+    } else {
+        retval = 0;
+    }
+
+fail:
+    (void) ext2fs_close(fs);
+    return retval;
 }
 
 #ifdef __KLIBC__
