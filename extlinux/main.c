@@ -41,6 +41,7 @@
 #include <sys/types.h>
 #include <sys/mount.h>
 #include <sys/vfs.h>
+#include <ext2fs/ext2fs.h>
 
 #include "linuxioctl.h"
 
@@ -991,6 +992,12 @@ static int install_file(const char *path, int devfd, struct stat *rst)
     return 1;
 }
 
+
+static int install_file_to_device(const char *device_path, int devfd,
+                int update_only)
+{
+}
+
 #ifdef __KLIBC__
 static char devname_buf[64];
 
@@ -1452,15 +1459,26 @@ static int ext_write_adv(const char *path, const char *cfg, int devfd)
     return write_adv(path, cfg);
 }
 
-static int install_loader(const char *path, int update_only)
+static int install_loader(const char *path, int update_only, struct stat st)
 {
-    struct stat st, fst;
+    struct stat fst;
     int devfd, rv;
     const char *devname;
 
-    devfd = open_device(path, &st, &devname);
-    if (devfd < 0)
-	return 1;
+    /* Support dir, ext2, ext3 and ext4 filesystem (device or file block) */
+    if S_ISDIR(st.st_mode) {
+        devfd = open_device(path, &st, &devname);
+        if (devfd < 0)
+            return 1;
+    } else if (S_ISBLK(st.st_mode) || S_ISREG(st.st_mode)) {
+        if ((devfd = open(path, O_RDWR | O_SYNC)) < 0) {
+            fprintf(stderr, "%s: cannot open device %s\n", program, devname);
+            return -1;
+        }
+    } else {
+        fprintf(stderr, "%s: unsupported file type: %s\n", program, path);
+        return -1;
+    }
 
     if (update_only && !syslinux_already_installed(devfd)) {
 	fprintf(stderr, "%s: no previous syslinux boot sector found\n",
@@ -1469,29 +1487,38 @@ static int install_loader(const char *path, int update_only)
 	return 1;
     }
 
-    /* Read a pre-existing ADV, if already installed */
-    if (opt.reset_adv) {
-	syslinux_reset_adv(syslinux_adv);
-    } else if (ext_read_adv(path, devfd, NULL) < 0) {
-	close(devfd);
-	return 1;
-    }
+    if S_ISDIR(st.st_mode) {
+        /* Read a pre-existing ADV, if already installed */
+        if (opt.reset_adv) {
+            syslinux_reset_adv(syslinux_adv);
+        } else if (ext_read_adv(path, devfd, NULL) < 0) {
+            close(devfd);
+            return 1;
+        }
 
-    if (modify_adv() < 0) {
-	close(devfd);
-	return 1;
-    }
+        if (modify_adv() < 0) {
+            close(devfd);
+            return 1;
+        }
 
-    /* Install ldlinux.sys */
-    if (install_file(path, devfd, &fst)) {
-	close(devfd);
-	return 1;
-    }
-    if (fst.st_dev != st.st_dev) {
-	fprintf(stderr, "%s: file system changed under us - aborting!\n",
-		program);
-	close(devfd);
-	return 1;
+        /* Install ldlinux.sys */
+        if (install_file(path, devfd, &fst)) {
+            close(devfd);
+            return 1;
+        }
+        if (fst.st_dev != st.st_dev) {
+            fprintf(stderr, "%s: file system changed under us - aborting!\n",
+                program);
+            close(devfd);
+            return 1;
+        }
+    } else {
+        if (install_file_to_device(path, devfd, update_only)) {
+            fprintf(stderr, "%s: install file to device error!\n", program);
+            close(devfd);
+            return 1;
+        }
+        fs_type = EXT2;
     }
 
     sync();
@@ -1533,16 +1560,25 @@ int modify_existing_adv(const char *path)
 int main(int argc, char *argv[])
 {
     parse_options(argc, argv, MODE_EXTLINUX);
+    struct stat st;
 
     if (!opt.directory || opt.install_mbr || opt.activate_partition)
 	usage(EX_USAGE, 0);
 
+    if (stat(opt.directory, &st)) {
+        fprintf(stderr, "%s: %s: %s\n", program, opt.directory, strerror(errno));
+        return 1;
+    }
+
     if (opt.update_only == -1) {
-	if (opt.reset_adv || opt.set_once || opt.menu_save)
-	    return modify_existing_adv(opt.directory);
-	else
+	if (opt.reset_adv || opt.set_once || opt.menu_save) {
+            if S_ISDIR(st.st_mode)
+                return modify_existing_adv(opt.directory);
+            else if (S_ISBLK(st.st_mode) || S_ISREG(st.st_mode))
+                return install_file_to_device(opt.directory, -1, opt.update_only);
+	} else
 	    usage(EX_USAGE, MODE_EXTLINUX);
     }
 
-    return install_loader(opt.directory, opt.update_only);
+    return install_loader(opt.directory, opt.update_only, st);
 }
