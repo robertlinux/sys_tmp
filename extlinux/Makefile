@@ -52,7 +52,7 @@ spotless: clean
 installer: extlinux
 
 extlinux: $(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ -lext2fs
 
 strip:
 	$(STRIP) extlinux
