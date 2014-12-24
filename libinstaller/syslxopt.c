@@ -88,7 +88,7 @@ void __attribute__ ((noreturn)) usage(int rv, enum syslinux_mode mode)
 	/* Mounted fs installation (extlinux) */
 	/* Actually extlinux can also use -d to provide a directory too... */
 	fprintf(stderr,
-	    "Usage: %s [options] directory\n"
+	    "Usage: %s [options] <directory|device>\n"
 	    "  --device         Force use of a specific block device (experts only)\n",
 	    program);
 	break;
