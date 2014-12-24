@@ -992,6 +992,18 @@ static int install_file(const char *path, int devfd, struct stat *rst)
     return 1;
 }
 
+/* Read from an ext2_file */
+static int ext_read_from_fs(ext2_file_t e2_file, void *buf, size_t count,
+                        off_t offset, const char *msg)
+{
+}
+
+/* Write to an ext2_file */
+static int ext_write_to_fs(ext2_file_t e2_file, const void *buf, size_t count,
+                        off_t offset, const char *msg)
+{
+}
+
 
 static int write_to_device(ext2_filsys fs, const char *filename,
                                   const char *str, int length, int i_flags,
@@ -1001,6 +1013,106 @@ static int write_to_device(ext2_filsys fs, const char *filename,
 
 static int handle_adv_on_device(ext2_filsys fs, int update_only)
 {
+    ext2_ino_t          root = EXT2_ROOT_INO;
+    int                 i, retval, found_file;
+    int                 need_close = 2; /* 2 means no need extra close */
+    char                *filenames[2] = {"ldlinux.sys", "extlinux.sys"};
+    char                *filename;
+    ext2_ino_t          newino;
+    ext2_file_t         e2_file;
+    struct ext2_inode   inode;
+
+    for (i = 0; i < 2; i++) {
+        filename = filenames[i];
+        found_file = 0;
+        retval = ext2fs_namei(fs, root, root, filename, &newino);
+        if (retval == 0) {
+            dprintf("%s: found file %s, reading ADV from it\n",
+                program, filename);
+            found_file = 1;
+        } else
+            continue;
+
+        need_close = i;
+
+        retval = ext2fs_file_open(fs, newino, EXT2_FLAG_RW, &e2_file);
+        if (retval) {
+            fprintf(stderr, "%s: ERROR: failed to open %s\n",
+                program, filename);
+            goto fail;
+        }
+
+        retval = ext2fs_read_inode(fs, newino, &inode);
+        if (retval) {
+            fprintf(stderr, "%s: ERROR: while reading inode: %u, file: %s\n",
+                program, newino, filename);
+            goto fail;
+        }
+
+        /* Check the size to see if too small to read */
+        if (inode.i_size < 2 * ADV_SIZE) {
+            if (update_only == -1) {
+                fprintf(stderr, "%s: ERROR: failed to write auxilliary data\n\
+                        the size of %s is too small (need --update)?\n",
+                        program, filename);
+                retval = -1;
+                goto fail;
+            }
+            syslinux_reset_adv(syslinux_adv);
+            found_file = 0;
+            break;
+        }
+
+        /* Read the adv */
+        retval = ext_read_from_fs(e2_file, syslinux_adv, 2 * ADV_SIZE,
+                        inode.i_size - 2 * ADV_SIZE, "ADV");
+        if (retval == -1)
+                goto fail;
+        if (retval == 2 * ADV_SIZE) {
+            retval = syslinux_validate_adv(syslinux_adv);
+            /* Read the adv successfully */
+            if (retval == 0)
+                break;
+        }
+
+        /* Close the file if reaches here, otherwise we leave the file
+         * open in case we need write it */
+        need_close = 2;
+        retval = ext2fs_file_close(e2_file);
+        if (retval) {
+            fprintf(stderr, "%s: ERROR: while closing %s\n",
+                program, filename);
+            return retval;
+        }
+    }
+
+    if (!found_file) {
+        if (update_only == -1) {
+            fprintf(stderr, "%s: ERROR: no ldlinux.sys or extlinux.sys found on the device\n",
+                program);
+            return -1;
+        }
+        syslinux_reset_adv(syslinux_adv);
+    }
+
+    /* The modify_adv will reset the adv if opt.reset_adv */
+    if (modify_adv() < 0) {
+        fprintf(stderr, "%s: ERROR: while modifying adv\n", program);
+        retval = -1;
+        goto fail;
+    }
+
+    /* Write adv if update_only == -1 and found file */
+    if (update_only == -1 && found_file) {
+        if (ext_write_to_fs(e2_file, syslinux_adv, 2 * ADV_SIZE ,
+                        inode.i_size - 2 * ADV_SIZE, "ADV") == -1)
+                goto fail;
+    }
+
+fail:
+    if (need_close != 2)
+        (void) ext2fs_file_close(e2_file);
+    return retval;
 }
 
 static int install_file_to_device(const char *device_path, int devfd,
