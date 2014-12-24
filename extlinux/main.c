@@ -996,14 +996,65 @@ static int install_file(const char *path, int devfd, struct stat *rst)
 static int ext_read_from_fs(ext2_file_t e2_file, void *buf, size_t count,
                         off_t offset, const char *msg)
 {
+    int                 retval;
+    char                *ptr = (char *) buf;
+    unsigned int        got = 0;
+    size_t              done = 0;
+
+    /* Always lseek since e2_file is uncontrolled by this func */
+    if (ext2fs_file_lseek(e2_file, offset, EXT2_SEEK_SET, NULL)) {
+        fprintf(stderr, "%s: ERROR: ext2fs_file_lseek() failed.\n",
+            program);
+        return -1;
+    }
+
+    dprintf("%s: Reading %s\n", program, msg);
+    while (1) {
+        retval = ext2fs_file_read(e2_file, ptr, count, &got);
+        if (retval) {
+            fprintf(stderr, "%s: ERROR: while reading %s\n",
+                    program, msg);
+            return -1;
+        }
+        count -= got;
+        ptr += got;
+        done += got;
+        if (got == 0 || count == 0)
+            break;
+    }
+
+    return done;
 }
 
 /* Write to an ext2_file */
 static int ext_write_to_fs(ext2_file_t e2_file, const void *buf, size_t count,
                         off_t offset, const char *msg)
 {
-}
+    const char          *ptr = (const char *) buf;
+    unsigned int        written = 0;
+    size_t              done = 0;
 
+    /* Always lseek since e2_file is uncontrolled by this func */
+    if (ext2fs_file_lseek(e2_file, offset, EXT2_SEEK_SET, NULL)) {
+            fprintf(stderr, "%s: ERROR: ext2fs_file_lseek() failed.\n",
+                program);
+            return -1;
+    }
+
+    dprintf("%s: writing %s\n", program, msg);
+    while (count > 0) {
+        if (ext2fs_file_write(e2_file, ptr, count, &written)) {
+            fprintf(stderr, "%s: ERROR: failed to write syslinux adv.\n",
+                    program);
+            return -1;
+        }
+        count -= written;
+        ptr += written;
+        done += written;
+    }
+
+    return done;
+}
 
 static int write_to_device(ext2_filsys fs, const char *filename,
                                   const char *str, int length, int i_flags,
