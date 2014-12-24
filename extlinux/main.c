@@ -225,6 +225,37 @@ ok:
 /* Patch syslinux_bootsect */
 static void patch_syslinux_bootsect(int devfd)
 {
+    uint64_t totalbytes, totalsectors;
+    struct hd_geometry geo;
+    struct fat_boot_sector *sbs;
+
+    totalbytes = get_size(devfd);
+    get_geometry(devfd, totalbytes, &geo);
+
+    if (opt.heads)
+	geo.heads = opt.heads;
+    if (opt.sectors)
+	geo.sectors = opt.sectors;
+
+    /* Patch this into a fake FAT superblock.  This isn't because
+       FAT is a good format in any way, it's because it lets the
+       early bootstrap share code with the FAT version. */
+    dprintf("heads = %u, sect = %u\n", geo.heads, geo.sectors);
+
+    sbs = (struct fat_boot_sector *)syslinux_bootsect;
+
+    totalsectors = totalbytes >> SECTOR_SHIFT;
+    if (totalsectors >= 65536) {
+	set_16(&sbs->bsSectors, 0);
+    } else {
+	set_16(&sbs->bsSectors, totalsectors);
+    }
+    set_32(&sbs->bsHugeSectors, totalsectors);
+
+    set_16(&sbs->bsBytesPerSec, SECTOR_SIZE);
+    set_16(&sbs->bsSecPerTrack, geo.sectors);
+    set_16(&sbs->bsHeads, geo.heads);
+    set_32(&sbs->bsHiddenSecs, geo.start);
 }
 
 /*
@@ -237,11 +268,8 @@ static void patch_syslinux_bootsect(int devfd)
 static int patch_file_and_bootblock(int fd, const char *dir, int devfd)
 {
     struct stat dirst, xdst;
-    struct hd_geometry geo;
     sector_t *sectp;
-    uint64_t totalbytes, totalsectors;
     int nsect;
-    struct fat_boot_sector *sbs;
     char *dirpath, *subpath, *xdirpath;
     int rv;
 
@@ -285,33 +313,8 @@ static int patch_file_and_bootblock(int fd, const char *dir, int devfd)
     /* Now subpath should contain the path relative to the fs base */
     dprintf("subpath = %s\n", subpath);
 
-    totalbytes = get_size(devfd);
-    get_geometry(devfd, totalbytes, &geo);
-
-    if (opt.heads)
-	geo.heads = opt.heads;
-    if (opt.sectors)
-	geo.sectors = opt.sectors;
-
-    /* Patch this into a fake FAT superblock.  This isn't because
-       FAT is a good format in any way, it's because it lets the
-       early bootstrap share code with the FAT version. */
-    dprintf("heads = %u, sect = %u\n", geo.heads, geo.sectors);
-
-    sbs = (struct fat_boot_sector *)syslinux_bootsect;
-
-    totalsectors = totalbytes >> SECTOR_SHIFT;
-    if (totalsectors >= 65536) {
-	set_16(&sbs->bsSectors, 0);
-    } else {
-	set_16(&sbs->bsSectors, totalsectors);
-    }
-    set_32(&sbs->bsHugeSectors, totalsectors);
-
-    set_16(&sbs->bsBytesPerSec, SECTOR_SIZE);
-    set_16(&sbs->bsSecPerTrack, geo.sectors);
-    set_16(&sbs->bsHeads, geo.heads);
-    set_32(&sbs->bsHiddenSecs, geo.start);
+    /* Patch syslinux_bootsect */
+    patch_syslinux_bootsect(devfd);
 
     /* Construct the boot file map */
 
