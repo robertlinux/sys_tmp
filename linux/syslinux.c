@@ -349,6 +349,68 @@ fail:
 
 }
 
+/* Read from an ext2_file */
+static int ext_file_read(ext2_file_t e2_file, void *buf, size_t count,
+                        off_t offset, const char *msg)
+{
+    int                 retval;
+    char                *ptr = (char *) buf;
+    unsigned int        got = 0;
+    size_t              done = 0;
+
+    /* Always lseek since e2_file is uncontrolled by this func */
+    if (ext2fs_file_lseek(e2_file, offset, EXT2_SEEK_SET, NULL)) {
+        fprintf(stderr, "%s: ext2fs_file_lseek() failed.\n",
+            program);
+        return -1;
+    }
+
+    while (1) {
+        retval = ext2fs_file_read(e2_file, ptr, count, &got);
+        if (retval) {
+            fprintf(stderr, "%s: error while reading %s\n",
+                    program, msg);
+            return -1;
+        }
+        count -= got;
+        ptr += got;
+        done += got;
+        if (got == 0 || count == 0)
+            break;
+    }
+
+    return done;
+}
+
+/* Write to an ext2_file */
+static int ext_file_write(ext2_file_t e2_file, const void *buf, size_t count,
+                        off_t offset)
+{
+    const char          *ptr = (const char *) buf;
+    unsigned int        written = 0;
+    size_t              done = 0;
+
+    /* Always lseek since e2_file is uncontrolled by this func */
+    if (ext2fs_file_lseek(e2_file, offset, EXT2_SEEK_SET, NULL)) {
+            fprintf(stderr, "%s: ext2fs_file_lseek() failed.\n",
+                program);
+            return -1;
+    }
+
+    while (count > 0) {
+        if (ext2fs_file_write(e2_file, ptr, count, &written)) {
+            fprintf(stderr, "%s: failed to write syslinux adv.\n",
+                    program);
+            return -1;
+        }
+        count -= written;
+        ptr += written;
+        done += written;
+    }
+
+    return done;
+}
+
 /*
  * Install the boot block on the specified device.
  * Must be run AFTER file installed.
