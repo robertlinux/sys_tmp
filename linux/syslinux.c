@@ -346,11 +346,90 @@ static int open_ext2_fs(const char *device, const char *subdir)
 fail:
     (void) ext2fs_close(e2fs);
     return -1;
+
+}
+
+/*
+ * Install the boot block on the specified device.
+ * Must be run AFTER file installed.
+ */
+int install_bootblock(int fd, const char *device)
+{
+}
+
+static int handle_adv_on_ext(void)
+{
+}
+
+/* Write files, adv, boot sector */
+static int write_to_ext(const char *filename, const char *str, int length,
+                        int i_flags, int dev_fd, const char *subdir)
+{
 }
 
 /* The install func for ext2, ext3 and ext4 */
 static int install_to_ext2(const char *device, int dev_fd, const char *subdir)
 {
+    int         retval;
+    ext2_ino_t  oldino;
+
+    const char *file = "ldlinux.sys";
+    const char *oldfile = "extlinux.sys";
+    const char *c32file = "ldlinux.c32";
+
+    /* Handle the adv */
+    if (handle_adv_on_ext() < 0) {
+        fprintf(stderr, "%s: error while handling ADV on %s\n",
+                program, device);
+        retval = 1;
+        goto fail;
+    }
+
+    /* Return if only need update the adv */
+    if (opt.update_only == -1) {
+        return ext2fs_close(e2fs);
+    }
+
+    /* Write ldlinux.sys, adv, boot sector */
+    retval = write_to_ext(file, (const char _force *)boot_image,
+                boot_image_len, EXT2_IMMUTABLE_FL, dev_fd, subdir);
+    if (retval) {
+        fprintf(stderr, "%s: ERROR: while writing: %s.\n",
+                program, file);
+        goto fail;
+    }
+
+    /* Write ldlinux.c32 */
+    retval = write_to_ext(c32file,
+                (const char _force *)syslinux_ldlinuxc32,
+                syslinux_ldlinuxc32_len, 0, dev_fd, subdir);
+    if (retval) {
+        fprintf(stderr, "%s: ERROR: while writing: %s.\n",
+                program, c32file);
+        goto fail;
+    }
+
+    /* Look if we have the extlinux.sys and remove it*/
+    retval = ext2fs_namei(e2fs, root, cwd, oldfile, &oldino);
+    if (retval == 0) {
+        retval = ext2fs_unlink(e2fs, cwd, oldfile, oldino, 0);
+        if (retval) {
+            fprintf(stderr, "%s: ERROR: failed to unlink: %s\n",
+                program, oldfile);
+            goto fail;
+        }
+    } else {
+        retval = 0;
+    }
+
+    sync();
+    retval = install_bootblock(dev_fd, device);
+    close(dev_fd);
+    sync();
+
+fail:
+    (void) ext2fs_close(e2fs);
+    return retval;
 }
 
 int main(int argc, char *argv[])
