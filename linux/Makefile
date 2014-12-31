@@ -51,7 +51,7 @@ spotless: clean
 installer: syslinux syslinux-nomtools
 
 syslinux: $(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ -lext2fs
 
 syslinux-nomtools: syslinux
 	ln -f $< $@

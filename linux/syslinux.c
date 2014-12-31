@@ -72,6 +72,7 @@
 #include "syslxfs.h"
 #include "setadv.h"
 #include "syslxopt.h" /* unified options */
+#include <ext2fs/ext2fs.h>
 
 extern const char *program;	/* Name of program */
 
@@ -81,6 +82,9 @@ char *mntpath = NULL;		/* Path on which to mount */
 #if DO_DIRECT_MOUNT
 int loop_fd = -1;		/* Loop device */
 #endif
+
+ext2_filsys     e2fs = NULL;    /* Ext2/3/4 filesystem */
+ext2_ino_t      root, cwd;      /* The root and cwd of e2fs */
 
 void __attribute__ ((noreturn)) die(const char *msg)
 {
@@ -266,6 +270,82 @@ int do_open_file(char *name)
  */
 static int open_ext2_fs(const char *device, const char *subdir)
 {
+    int         retval;
+    int         open_flag = EXT2_FLAG_RW, mount_flags;
+    ext2_ino_t  dirino;
+    char        opt_string[40];
+
+    if (opt.offset) {
+        sprintf(opt_string, "offset=%llu", (unsigned long long)opt.offset);
+        retval = ext2fs_open2(device, opt_string, open_flag, 0, 0, unix_io_manager, &e2fs);
+    } else
+        retval = ext2fs_open(device, open_flag, 0, 0, unix_io_manager, &e2fs);
+    if (retval) {
+        /* It might not be an extN fs, so we need check magic firstly */
+        if (retval == EXT2_ET_BAD_MAGIC) {
+            /* Do nothing, return silently */
+            return 1;
+        } else {
+            fprintf(stderr, "%s: error while trying to open: %s\n",
+                program, device);
+            return -1;
+        }
+    }
+
+    /* Stop if it is mounted */
+    retval = ext2fs_check_if_mounted(device, &mount_flags);
+    if (retval) {
+        fprintf(stderr, "%s: ext2fs_check_if_mount() error on %s\n",
+                program, device);
+        goto fail;
+    }
+
+    if (mount_flags & EXT2_MF_MOUNTED) {
+        fprintf(stderr, "%s: %s is mounted\n", program, device);
+        goto fail;
+    }
+
+    e2fs->default_bitmap_type = EXT2FS_BMAP64_RBTREE;
+
+    /* Read the inode map */
+    retval = ext2fs_read_inode_bitmap(e2fs);
+    if (retval) {
+        fprintf(stderr, "%s: while reading inode bitmap: %s\n",
+                program, device);
+        goto fail;
+    }
+
+    /* Read the block map */
+    retval = ext2fs_read_block_bitmap(e2fs);
+    if (retval) {
+        fprintf(stderr, "%s: while reading block bitmap: %s\n",
+                program, device);
+        goto fail;
+    }
+
+    root = cwd = EXT2_ROOT_INO;
+    /* Check the subdir */
+    if (strcmp(subdir, "/")) {
+	retval = ext2fs_namei(e2fs, root, cwd, subdir, &dirino);
+        if (retval) {
+            fprintf(stderr, "%s: failed to find dir %s on %s\n",
+                program, subdir, device);
+            goto fail;
+        }
+
+        retval = ext2fs_check_directory(e2fs, dirino);
+        if (retval) {
+            fprintf(stderr, "%s: failed to cd to: %s\n", program, subdir);
+                goto fail;
+        }
+        cwd = dirino;
+    }
+
+    return 0;
+
+fail:
+    (void) ext2fs_close(e2fs);
+    return -1;
 }
 
 /* The install func for ext2, ext3 and ext4 */
