@@ -419,6 +419,26 @@ static int ext_file_write(ext2_file_t e2_file, const void *buf, size_t count,
  */
 int install_bootblock(int fd, const char *device)
 {
+    struct ext2_super_block sb;
+
+    if (xpread(fd, &sb, sizeof sb, EXT2_SUPER_OFFSET + opt.offset) != sizeof sb) {
+        perror("reading superblock");
+        return 1;
+    }
+
+    if (sb.s_magic != EXT2_SUPER_MAGIC) {
+        fprintf(stderr,
+                "no ext2/3/4 superblock found on %s\n", device);
+        return 1;
+    }
+
+    if (xpwrite(fd, syslinux_bootsect, syslinux_bootsect_len, 0)
+        != (signed)syslinux_bootsect_len) {
+        perror("writing bootblock");
+        return 1;
+    }
+
+    return 0;
 }
 
 /* The file's block count */
