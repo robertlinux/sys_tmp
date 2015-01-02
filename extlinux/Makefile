@@ -31,7 +31,8 @@ SRCS     = main.c \
 	   ../libinstaller/advio.c \
 	   ../libinstaller/bootsect_bin.c \
 	   ../libinstaller/ldlinuxc32_bin.c \
-	   ../libinstaller/ldlinux_bin.c
+	   ../libinstaller/ldlinux_bin.c \
+	   ../libinstaller/syslinuxext.c
 OBJS	 = $(patsubst %.c,%.o,$(notdir $(SRCS)))
 
 .SUFFIXES: .c .o .i .s .S
