@@ -421,10 +421,60 @@ int install_bootblock(int fd, const char *device)
 {
 }
 
+/* The file's block count */
+int block_count = 0;
+static int get_block_count(ext2_filsys fs EXT2FS_ATTR((unused)),
+			     blk64_t *blocknr EXT2FS_ATTR((unused)),
+			     e2_blkcnt_t blockcnt EXT2FS_ATTR((unused)),
+			     blk64_t ref_block EXT2FS_ATTR((unused)),
+			     int ref_offset EXT2FS_ATTR((unused)),
+			     void *private EXT2FS_ATTR((unused)))
+{
+    block_count++;
+    return 0;
+}
+
 /* Construct the boot file map */
 int ext_construct_sectmap_fs(ext2_filsys fs, ext2_ino_t newino,
                                 sector_t *sectors, int nsect)
 {
+    blk64_t             pblk, blksize, blk = 0;
+    sector_t            sec;
+    unsigned int        i;
+    int                 retval;
+
+    blksize = fs->blocksize;
+    blksize >>= SECTOR_SHIFT;
+
+    /* Get the total blocks no. */
+    retval = ext2fs_block_iterate3(fs, newino, BLOCK_FLAG_READ_ONLY,
+            NULL, get_block_count, NULL);
+    if (retval) {
+        fprintf(stderr, "%s: ERROR: ext2fs_block_iterate3() failed.\n", program);
+        return -1;
+    }
+
+    while (nsect) {
+        if (block_count-- == 0)
+            break;
+
+        /* Get the physical block no. (bmap) */
+        retval = ext2fs_bmap2(fs, newino, 0, 0, 0, blk, 0, &pblk);
+        if (retval) {
+            fprintf(stderr, "%s: ERROR: ext2fs_bmap2() failed.\n", program);
+            return -1;
+        }
+
+        blk++;
+        sec = (sector_t)pblk * blksize;
+        for (i = 0; i < blksize; i++) {
+            *sectors++ = sec++;
+            if (! --nsect)
+                break;
+        }
+    }
+
+    return 0;
 }
 
 static int handle_adv_on_ext(void)
